@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.8.34316.72
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AIDataPlatform.Client", "AIDataPlatform.Client\AIDataPlatform.Client.csproj", "{EC7456D2-983A-4FA2-B4A8-D87FCC379267}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AIDataPlatform", "AIDataPlatform\AIDataPlatform.csproj", "{0A576444-3574-47BC-B710-AAF9397AB000}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EC7456D2-983A-4FA2-B4A8-D87FCC379267}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EC7456D2-983A-4FA2-B4A8-D87FCC379267}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EC7456D2-983A-4FA2-B4A8-D87FCC379267}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EC7456D2-983A-4FA2-B4A8-D87FCC379267}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0A576444-3574-47BC-B710-AAF9397AB000}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A576444-3574-47BC-B710-AAF9397AB000}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A576444-3574-47BC-B710-AAF9397AB000}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0A576444-3574-47BC-B710-AAF9397AB000}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {709CF8F7-D289-499B-A043-4FB87C67E2DD}
+	EndGlobalSection
+EndGlobal

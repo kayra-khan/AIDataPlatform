@@ -1,0 +1,251 @@
+﻿@page "/search"
+
+@using System.Timers
+@using Syncfusion.Blazor
+@using Syncfusion.Blazor.Lists
+@using Syncfusion.Blazor.Grids
+@using Syncfusion.Blazor.Inputs
+@using Syncfusion.Blazor.Navigations
+@using Syncfusion.Blazor.Popups
+@using Azure.Search.Documents
+@using Azure.Search.Documents.Models
+@using System.Collections.ObjectModel
+@using Newtonsoft.Json
+@using AIDataPlatform.Helpers
+@using AIDataPlatform.Models
+
+@inject AIDataPlatform.Services.Search.SearchService SearchService
+@inject NavigationManager NavigationManager
+@inject AIDataPlatform.Services.AI.AIService AIService
+@inject AIDataPlatform.Services.Database.CosmosDbService CosmosDbService
+@inject AIDataPlatform.Services.Storage.BlobStorageService BlobStorageService
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<h3>AI Search</h3>
+
+<SfGrid DataSource="@ListData" AllowResizing="true" AllowSorting="true" ContextMenuItems="@contextMenuItems">
+    <GridEvents ContextMenuItemClicked="OnContextMenuClick" TValue="Document"></GridEvents>
+    <GridTemplates>
+        <ToolbarTemplate>
+            <SfToolbar>
+                <ToolbarItems>
+                    <ToolbarItem Align="@ItemAlign.Center">
+                        <SfTextBox Placeholder="Search..." OnInput="InputHandler"></SfTextBox>
+                    </ToolbarItem>
+                </ToolbarItems>
+            </SfToolbar>
+        </ToolbarTemplate>
+        <DetailTemplate>
+            @{
+                var documentDetailContext = (context as Document);
+                var keyValuePairs = documentDetailContext?.KeyValuePairs != null
+                    ? JsonConvert.DeserializeObject<List<Element>>(documentDetailContext.KeyValuePairs) ?? new List<Element>()
+                    : new List<Element>();
+
+                <table class="detailtable" width="100%">
+                    <colgroup>
+                        <col width="35%">
+                    </colgroup>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span style="font-weight: 500;">Content: </span> @(JsonConvert.DeserializeObject<OriginalContent>(documentDetailContext.OriginalContent)?.Content)
+                            </td>
+                        </tr>
+                        
+                        @if(keyValuePairs.Count() > 0)
+                        {
+                            foreach (var keyValuePair in keyValuePairs)
+                            {
+                                <tr>
+                                    <td>
+                                        <span style="font-weight: 500;">Key: </span> @keyValuePair.Key?.Content
+                                    </td>
+                                    <td>
+                                        @if (@keyValuePair.Value is null)
+                                        {
+                                            try
+                                            {
+                                                <span style="font-weight: 500;">Value: </span> @("NULL")
+                                            }
+                                            catch (Exception e)
+                                            {
+                                                Console.WriteLine(e.Message);
+                                            } // end of try catch block
+                                        }
+                                        else
+                                        {
+                                            try
+                                            {
+                                                <span style="font-weight: 500;">Value: </span> @keyValuePair.Value?.Content?.ToString()
+                                            }
+                                            catch (Exception e)
+                                            {
+                                                Console.WriteLine($@"there was a problem with displaying a key value pair value content for key {keyValuePair.Key}. will output only the value without content. look at following error for mor details: {e.Message}");
+                                                <span style="font-weight: 500;">Value: </span> @keyValuePair.Value
+                                            } // end of try catch block
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </DetailTemplate>
+    </GridTemplates>
+    <GridSortSettings>
+        <GridSortColumns>
+            <GridSortColumn Field=@nameof(Document.DateId) Direction="SortDirection.Descending"></GridSortColumn>
+        </GridSortColumns>
+    </GridSortSettings>
+    <GridColumns>
+        <GridColumn Field=@nameof(Document.id) HeaderText="id" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+        <GridColumn Field=@nameof(Document.TenantId) HeaderText="TenantId" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+        <GridColumn Field=@nameof(Document.DocumentTypeId) HeaderText="DocumentTypeId" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+        <GridColumn Field=@nameof(Document.DateId) HeaderText="DateId" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+        <GridColumn Field=@nameof(Document.DocumentId) HeaderText="DocumentId" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+    </GridColumns>
+</SfGrid>
+
+<style type="text/css" class="cssStyles">
+    .detailtable td {
+        font-size: 13px;
+        padding: 4px;
+        max-width: 0;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+</style>
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    private string? searchTerm { get; set; }
+    private ObservableCollection<Document>? ListData { get; set; } // observable collection is used to update the UI when the data changes
+    private Timer? debounceTimer; // debouncing for the search input
+    private List<ContextMenuItemModel>? contextMenuItems = new() { new ContextMenuItemModel { Text = "Open in Form", Target = ".e-content", Id = "openInForm", IconCss = "e-icons e-file-document" } };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+        }
+
+        debounceTimer = new Timer(800); // Set debounce delay to 300ms
+        debounceTimer.Elapsed += OnDebounceTimerElapsed; // Event elapsed is hooked to OnDebounceTimerElapsed
+        debounceTimer.AutoReset = false; // Ensure the timer only runs once per input
+    }
+
+    private async Task SearchAsync(string searchTerm)
+    {
+        ListData = new ObservableCollection<Document>();
+        var semanticSearchResults = await AIService.SendSemanticPromptAsync(searchTerm);
+
+        if(semanticSearchResults.NoResult == false)
+        {
+            var documentIds = AIService.ExtractDocumentIdFromTag(semanticSearchResults);
+
+            foreach (var documentId in documentIds)
+            {
+                var documentQuery = await CosmosDbService.QueryDocumentsAsync($"SELECT * FROM GlobalStore WHERE GlobalStore.DocumentId = '{documentId}'");
+
+                var document = documentQuery.FirstOrDefault();
+
+                if (document != null && !ListData.Any(d => d.DocumentId == document.DocumentId))
+                {
+                    ListData.Add(new Document
+                        {
+                            id = document.id,
+                            TenantId = document.TenantId,
+                            DocumentTypeId = document.DocumentTypeId,
+                            DateId = document.DateId,
+                            DocumentId = document.DocumentId,
+                            OriginalContent = document.OriginalContent,
+                            KeyValuePairs = document?.KeyValuePairs
+                        });
+                }
+            }
+        }
+    }
+
+    private void InputHandler(Microsoft.AspNetCore.Components.ChangeEventArgs args)
+    {
+        searchTerm = args.Value?.ToString();
+        Console.WriteLine($"Input received: {searchTerm}");
+        debounceTimer?.Stop();
+        debounceTimer?.Start();
+        Console.WriteLine("Timer started");
+    }
+
+    private async void OnDebounceTimerElapsed(object? sender, ElapsedEventArgs e)
+    {
+        debounceTimer?.Stop();
+        Console.WriteLine("Timer elapsed");
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            Console.WriteLine($"Searching for: {searchTerm}");
+            await InvokeAsync(async () => await SearchAsync(searchTerm));
+            await InvokeAsync(void () => StateHasChanged());
+        }
+    }
+
+    private async Task OnContextMenuClick(ContextMenuClickEventArgs<Document> args)
+    {
+        if (args.Item.Id == "openInForm")
+        {
+            var documentId = args.RowInfo?.RowData?.DocumentId;
+            var blobItem = BlobStorageService.GetBlobsAsync(tenantId: tenantId, containerName: "contoso-out", prefix: documentId).Result.Where(blob => blob.Name.EndsWith("_cmp.pdf")).FirstOrDefault();
+
+            if(blobItem != null)
+            {
+                NavigationManager.NavigateTo($"/form/{blobItem?.Name?.Replace("_cmp.pdf", ".pdf")}");
+            }
+            else
+            {
+                Console.WriteLine("Blob item not found");
+            }  
+        }
+
+        await Task.CompletedTask;
+    }
+
+    // Dispose the timer when the component is disposed
+    public void Dispose()
+    {
+        debounceTimer?.Dispose();
+    }
+}
+
+<!-- old searchasync code
+//searchResults = await SearchService.SearchAsync(_searchTerm);
+
+        /*foreach (var result in semanticSearchResults.Metadata)
+        {
+            ListData.Add(
+                new AiSearchDocument {
+                    id = result.Document["id"].ToString(),
+                    TenantId = result.Document["TenantId"].ToString(),
+                    DocumentTypeId = result.Document["DocumentTypeId"].ToString(),
+                    DateId = result.Document["DateId"].ToString(),
+                    DocumentId = result.Document["DocumentId"].ToString(),
+                    OriginalContent = result.Document["OriginalContent"].ToString(),
+                    KeyValuePairs = (result.Document["KeyValuePairs"] as IEnumerable<dynamic>),
+                    Language = result.Document["language"].ToString(),
+                    KeyPhrases = string.Join(", ", (result.Document["keyphrases"] as IEnumerable<object>).Select(o => o.ToString())),
+                    TranslatedText = result.Document["translated_text"].ToString()
+                }
+            );
+            
+        }*/
+-->

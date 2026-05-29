@@ -1,0 +1,609 @@
+@page "/chat"
+
+@using System.Text
+@using Syncfusion.Blazor.InteractiveChat
+@using Syncfusion.Blazor.Navigations
+@using Syncfusion.Blazor.Popups
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.Layouts
+@using Markdig;
+@using AIDataPlatform.Models
+
+@inject AIDataPlatform.Services.AI.AIService AIService
+@inject AIDataPlatform.Services.IDockerService DockerService
+@inject AIDataPlatform.Services.AI.IAutoGenStreamingService AutoGenStreamingService
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<div class="chat-container">
+    <SfSplitter Height="100%" Width="100%">
+        <SplitterPanes>
+            <!-- Chat Panel -->
+            <SplitterPane Size="70%" Min="50%">
+                <ContentTemplate>
+                    <SfAIAssistView @ref="aiAssistView" 
+                                    PromptRequested="@PromptRequest" 
+                                    ResponseIconCss="e-icons e-assistview-icon" 
+                                    @bind-Prompt="@transcript"
+                                    Height="100%">
+                        <AssistViews>
+                            <AssistViewToolbar ItemClicked="@OnAssistViewToolbarClickedAsync">
+                                <AssistViewToolbarItem Type="ItemType.Spacer"></AssistViewToolbarItem>
+                                <AssistViewToolbarItem Type="ItemType.Button" IconCss="e-icons e-saturation" Tooltip="History"></AssistViewToolbarItem>
+                                <AssistViewToolbarItem Type="ItemType.Button" IconCss="e-icons e-desktop" Tooltip="Browser Session"></AssistViewToolbarItem>
+                                <AssistViewToolbarItem>
+                                    <Template>
+                                        <div class="d-flex align-items-center">
+                                            <SfDropDownList TItem="string" TValue="string" 
+                                                            @bind-Value="selectedMode" 
+                                                            DataSource="@availableModes"
+                                                            CssClass="mode-selector"
+                                                            Placeholder="Select Mode"
+                                                            Width="150px"
+                                                            ValueChange="@OnModeChanged">
+                                            </SfDropDownList>
+                                            <SfSpeechToText @bind-Transcript="@transcript" 
+                                                            TooltipSettings="@speechSettings" 
+                                                            AllowInterimResults="true"></SfSpeechToText>
+                                        </div>
+                                    </Template>
+                                </AssistViewToolbarItem>
+                            </AssistViewToolbar>
+                            <AssistView ShowClearButton="true">
+                                <BannerTemplate>
+                                    <div class="banner-content">
+                                        <div class="e-icons e-assistview-icon"></div>
+                                        <h3>AI Assistance (@selectedMode Mode)</h3>
+                                        <i>To get started, provide input or choose a suggestion.</i>
+                                        @if (selectedMode == "Enhanced" && string.IsNullOrEmpty(currentSessionUrl))
+                                        {
+                                            <div class="alert alert-warning mt-2">
+                                                <small>Starting browser session for Enhanced mode...</small>
+                                            </div>
+                                        }
+                                        @if (selectedMode == "Enhanced" && !string.IsNullOrEmpty(currentSessionUrl))
+                                        {
+                                            <div class="alert alert-success mt-2">
+                                                <small><i class="e-icons e-check"></i> Enhanced mode ready with browser session</small>
+                                            </div>
+                                        }
+                                    </div>
+                                </BannerTemplate>
+                            </AssistView>
+                        </AssistViews>
+                    </SfAIAssistView>
+                </ContentTemplate>
+            </SplitterPane>
+
+            <!-- Browser Panel -->
+            <SplitterPane Size="30%" Min="20%">
+                <ContentTemplate>
+                    <div class="browser-panel h-100">
+                        <!-- Browser Header -->
+                        <div class="browser-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">Browser Session</h6>
+                                <div>
+                                    @if (!string.IsNullOrEmpty(currentSessionUrl))
+                                    {
+                                        <SfButton CssClass="e-small e-danger me-2" @onclick="StopCurrentSession" Disabled="@isLoading">
+                                            <span class="e-icons e-close"></span>
+                                        </SfButton>
+                                    }
+                                    <SfButton CssClass="e-small e-primary" @onclick="StartBrowserSession" Disabled="@isLoading">
+                                        <span class="e-icons @(isLoading ? "e-refresh" : "e-plus")"></span>
+                                        @(isLoading ? "Starting..." : "New")
+                                    </SfButton>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Browser Content -->
+                        <div class="browser-content">
+                            @if (!string.IsNullOrEmpty(currentSessionUrl))
+                            {
+                                <!-- Active Browser Session -->
+                                <iframe src="@currentSessionUrl" 
+                                        class="browser-iframe"
+                                        title="Browser Session">
+                                </iframe>
+                                
+                                <!-- Session Info -->
+                                <div class="mt-2 p-2 bg-white border rounded">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <small class="text-muted">
+                                            Session: @(currentSessionId?.Substring(0, 8) ?? "")...
+                                        </small>
+                                        <span class="status-badge @GetStatusClass(containerStatus)">
+                                            @containerStatus
+                                        </span>
+                                    </div>
+                                    <small class="text-muted d-block">
+                                        Created: @sessionCreatedTime?.ToString("HH:mm") 
+                                    </small>
+                                    @if (selectedMode == "Enhanced")
+                                    {
+                                        <small class="text-success d-block">
+                                            <i class="e-icons e-check"></i> Enhanced Mode Active
+                                        </small>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <!-- No Active Session -->
+                                <div class="text-center text-muted h-100 d-flex align-items-center justify-content-center">
+                                    <div>
+                                        <div class="e-icons e-desktop mb-3" style="font-size: 48px;"></div>
+                                        <p class="mb-2">
+                                            @if (isLoading)
+                                            {
+                                                <span>Starting browser session...</span>
+                                            }
+                                            else
+                                            {
+                                                <span>No active browser session</span>
+                                            }
+                                        </p>
+                                        @if (!isLoading)
+                                        {
+                                            <small>Click "New" to start a browser session</small>
+                                        }
+                                        @if (selectedMode == "Enhanced" && !isLoading)
+                                        {
+                                            <div class="alert alert-info mt-3">
+                                                <small>Enhanced mode requires an active session</small>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </ContentTemplate>
+            </SplitterPane>
+        </SplitterPanes>
+    </SfSplitter>
+</div>
+
+<SfDialog @ref="historyDialog" Width="80%" Height="90%" IsModal="true" ShowCloseIcon="true" Header="Chat History" Visible="false" AllowPrerender="true">
+    <DialogTemplates>
+        <Content>
+            <SfGrid DataSource="@userChatHistory" AllowResizing="true" AllowSorting="true" AllowTextWrap="true" ContextMenuItems="@contextMenuItems">
+                <GridEvents ContextMenuItemClicked="@OnContextMenuClick" TValue="@UserChatHistory"></GridEvents>
+                <GridColumns>
+                    <GridColumn Field=@nameof(UserChatHistory.Id) HeaderText="Id" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+                    <GridColumn HeaderText="Prompt" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right">
+                        <Template>
+                            @{
+                                var history = (context as UserChatHistory);
+                                if (history?.Prompts != null && history.Prompts.Any())
+                                {
+                                    @(new MarkupString(string.Join("<br />", history.Prompts.Select(p =>
+                                        $"Prompt: {p.Prompt}, Response: {p.Response}"))))
+                                }
+                                else
+                                {
+                                    <span>No prompts available</span>
+                                }
+                            }
+                        </Template>
+                    </GridColumn>
+                    <GridColumn Field=@nameof(UserChatHistory.LastModified) HeaderText="Last Modified" Format="dd-MMM-yyyy HH:mm"></GridColumn>
+                    <GridColumn Field=@nameof(UserChatHistory.Created) HeaderText="Created" Format="dd-MMM-yyyy HH:mm"></GridColumn>
+                </GridColumns>
+            </SfGrid>
+        </Content>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@AnimationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+<style>
+    .chat-container {
+        height: 90vh;
+        overflow: hidden;
+    }
+    
+    .browser-panel {
+        background: #f8f9fa;
+        border-left: 1px solid #dee2e6;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .browser-header {
+        padding: 12px;
+        background: #fff;
+        border-bottom: 1px solid #dee2e6;
+        flex-shrink: 0;
+    }
+    
+    .browser-content {
+        flex: 1;
+        padding: 12px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .browser-iframe {
+        flex: 1;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        background: #000;
+    }
+    
+    .status-badge {
+        font-size: 0.75em;
+        padding: 2px 6px;
+        border-radius: 10px;
+    }
+    
+    .status-running {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .status-creating, .status-starting {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .status-stopped {
+        background: #f8d7da;
+        color: #721c24;
+    }
+
+    .mode-selector {
+        margin-right: 10px;
+        min-width: 150px;
+    }
+
+    .banner-content {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .alert {
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+
+    .alert-warning {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+    }
+
+    .alert-success {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+    }
+
+    .alert-info {
+        background-color: #d1ecf1;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
+    }
+</style>
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? UserId { get; set; }
+    
+    // Chat properties
+    private SfAIAssistView? aiAssistView;
+    private SfDialog? historyDialog;
+    private DialogEffect AnimationEffect { get; set; } = DialogEffect.Zoom;
+    private List<UserChatHistory>? userChatHistory;
+    private Guid? chatId;
+    string transcript = string.Empty;
+    
+    // Mode properties (simplified from AutoGen)
+    private string selectedMode = "Enhanced"; // Default to Enhanced mode
+    private List<string> availableModes = new() { "Standard", "Enhanced" };
+    
+    // Browser session properties
+    private string? currentSessionId;
+    private string? currentSessionUrl;
+    private string containerStatus = "unknown";
+    private DateTime? sessionCreatedTime;
+    private bool isLoading = false;
+    private System.Threading.Timer? refreshTimer;
+    
+    private MarkdownPipeline? pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .UsePipeTables()
+        .UseTaskLists()
+        .UseCitations()
+        .Build();
+
+    readonly SpeechToTextTooltipSettings speechSettings = new()
+    {
+        Position = TooltipPosition.BottomLeft
+    };
+
+    private List<ContextMenuItemModel>? contextMenuItems = new() 
+        { new ContextMenuItemModel 
+            { 
+                Text = "Open Chat", 
+                Target = ".e-content", 
+                Id = "openChatFromHistory", 
+                IconCss = "e-icons e-file-document" 
+            } 
+        };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            UserId = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+            
+            // Automatically start a browser session on page load
+            await StartBrowserSession();
+        }
+    }
+
+    private async Task OnModeChanged(Syncfusion.Blazor.DropDowns.ChangeEventArgs<string, string> args)
+    {
+        selectedMode = args.Value;
+        
+        // If switching to Enhanced mode and no session exists, start one
+        if (selectedMode == "Enhanced" && string.IsNullOrEmpty(currentSessionUrl))
+        {
+            await StartBrowserSession();
+        }
+        
+        StateHasChanged();
+    }
+
+    private async Task PromptRequest(AssistViewPromptRequestedEventArgs args)
+    {
+        // Update session access if we have an active session
+        if (!string.IsNullOrEmpty(currentSessionId) && !string.IsNullOrEmpty(UserId))
+        {
+            var session = await DockerService.GetSessionAsync(currentSessionId, UserId);
+            if (session != null)
+            {
+                containerStatus = session.Status;
+            }
+        }
+
+        if (selectedMode == "Enhanced")
+        {
+            // Use AutoGen streaming with AIAssistView's streaming support
+            await HandleAutoGenStreamingRequest(args);
+        }
+        else
+        {
+            // Use standard AI service
+            var response = await AIService.SendAutoGenPromptAsync(args.Prompt);
+            var htmlResponse = Markdown.ToHtml(response, pipeline);
+            args.Response = htmlResponse;
+        }
+        
+        // Save chat history after response is complete
+        var finalResponse = args.Response?.ToString() ?? "";
+        chatId = await AIService.SaveChatHistoryAsync(userId: UserId, prompt: args.Prompt, response: finalResponse, chatHistoryId: chatId);
+        await aiAssistView.ScrollToBottomAsync();
+    }
+
+    private async Task HandleAutoGenStreamingRequest(AssistViewPromptRequestedEventArgs args)
+    {
+        var containerBaseUrl = GetContainerBaseUrl();
+        
+        if (string.IsNullOrEmpty(containerBaseUrl))
+        {
+            args.Response = "Error: No active container session found for Enhanced mode.";
+            return;
+        }
+
+        try
+        {
+            var responseBuilder = new StringBuilder();
+            
+            // Stream the response using AIAssistView's UpdateResponseAsync method
+            await foreach (var chunk in AutoGenStreamingService.StreamChatAsync(args.Prompt, "gpt-4.1", containerBaseUrl))
+            {
+                if (responseStopped)
+                {
+                    responseStopped = false;
+                    break;
+                }
+                
+                responseBuilder.Append(chunk);
+                var htmlResponse = Markdown.ToHtml(responseBuilder.ToString(), pipeline);
+                
+                // Update the response in real-time using Syncfusion's method
+                await aiAssistView.UpdateResponseAsync(htmlResponse);
+                await aiAssistView.ScrollToBottomAsync();
+                
+                // Small delay to create a typing effect
+                await Task.Delay(50);
+            }
+
+            // Set final response for the args
+            args.Response = Markdown.ToHtml(responseBuilder.ToString(), pipeline);
+        }
+        catch (Exception ex)
+        {
+            var errorResponse = $"Enhanced Mode Error: {ex.Message}";
+            args.Response = errorResponse;
+            await aiAssistView.UpdateResponseAsync(errorResponse);
+        }
+    }
+
+    // Add response stopped handling
+    private bool responseStopped = false;
+    
+    private void HandleStopResponse(ResponseStoppedEventArgs args)
+    {
+        responseStopped = true;
+    }
+
+    private string? GetContainerBaseUrl()
+    {
+        /* For localhost testing
+        #if DEBUG
+        return "http://localhost:8000";
+        #endif
+        */
+        
+        if (string.IsNullOrEmpty(currentSessionUrl)) return null;
+        
+        // Since Traefik routes /api to port 8000 automatically, we can use the base domain
+        var uri = new Uri(currentSessionUrl);
+        return $"{uri.Scheme}://{uri.Host}";
+
+    }
+
+    private async Task OnAssistViewToolbarClickedAsync(AssistViewToolbarItemClickedEventArgs args)
+    {
+        if (args.Item.Tooltip == "History")
+        {
+            userChatHistory = await AIService.GetUserChatHistoryAsync(UserId);
+            await historyDialog.ShowAsync();
+        }
+        else if (args.Item.Tooltip == "Browser Session")
+        {
+            if (string.IsNullOrEmpty(currentSessionUrl))
+            {
+                await StartBrowserSession();
+            }
+        }
+    }
+
+    private async Task StartBrowserSession()
+    {
+        if (string.IsNullOrEmpty(UserId) || isLoading) return;
+        
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            // Generate new session ID
+            currentSessionId = Guid.NewGuid().ToString();
+            
+            // Create new session
+            currentSessionUrl = await DockerService.CreateUserSessionAsync(currentSessionId, UserId);
+            sessionCreatedTime = DateTime.Now;
+            containerStatus = "starting";
+            
+            // Start periodic status checks
+            StartStatusCheckTimer();
+            
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            // Handle error
+            containerStatus = "error";
+            Console.WriteLine($"Error starting session: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task StopCurrentSession()
+    {
+        if (string.IsNullOrEmpty(currentSessionId) || string.IsNullOrEmpty(UserId)) return;
+        
+        try
+        {
+            isLoading = true;
+            StateHasChanged();
+
+            await DockerService.StopUserSessionAsync(currentSessionId, UserId);
+            
+            // Clear session data
+            currentSessionId = null;
+            currentSessionUrl = null;
+            containerStatus = "stopped";
+            sessionCreatedTime = null;
+            
+            // Stop status check timer
+            refreshTimer?.Dispose();
+            refreshTimer = null;
+            
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error stopping session: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void StartStatusCheckTimer()
+    {
+        refreshTimer?.Dispose();
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (!string.IsNullOrEmpty(currentSessionId) && !string.IsNullOrEmpty(UserId))
+            {
+                try
+                {
+                    var session = await DockerService.GetSessionAsync(currentSessionId, UserId);
+                    if (session != null)
+                    {
+                        containerStatus = session.Status;
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch
+                {
+                    // Ignore errors during status check
+                }
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status.ToLower() switch
+        {
+            "running" => "status-running",
+            "starting" or "creating" => "status-creating",
+            "stopped" or "error" => "status-stopped",
+            _ => ""
+        };
+    }
+
+    private async Task OnContextMenuClick(Syncfusion.Blazor.Grids.ContextMenuClickEventArgs<UserChatHistory> args)
+    {
+        if (args.Item.Id == "openChatFromHistory" && args.RowInfo.RowData != null)
+        {
+            chatId = args.RowInfo.RowData.Id;
+            await historyDialog.HideAsync();
+            
+            // Load the selected chat history into the current conversation
+            if (args.RowInfo.RowData.Prompts?.Any() == true)
+            {
+                // Clear current conversation and load historical prompts
+                // Note: This would require additional implementation to properly restore chat history
+                StateHasChanged();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}

@@ -1,0 +1,93 @@
+﻿@page "/inviteuser"
+
+@using AIDataPlatform.Services.Communication
+@using Syncfusion.Blazor.Cards
+@using Syncfusion.Blazor.Inputs
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.Popups
+@using Syncfusion.Blazor.DataForm
+@using System.ComponentModel.DataAnnotations
+
+@inject InvitationService InvitationService
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<div class="d-flex justify-content-center align-items-center" style="min-height: 80vh;">
+    <SfCard Width="300px">
+        <div class="text-center mb-0">
+            <CardHeader Title="Invite User"></CardHeader>
+        </div>
+        <CardContent>
+            <SfDataForm ID="InviteForm" Model="@invitation" EnableFloatingLabel="true" OnValidSubmit="OnSubmitAsync">
+                <FormValidator>
+                    <DataAnnotationsValidator></DataAnnotationsValidator>
+                </FormValidator>
+                <FormItems>
+                    <FormItems>
+                        <FormItem Field="@nameof(invitation.Email)"></FormItem>
+                    </FormItems>
+                </FormItems>
+            </SfDataForm>
+        </CardContent>
+    </SfCard>
+</div>
+
+<SfDialog @bind-Visible="@showDialog" 
+          Width="300px" 
+          IsModal="true" 
+          ShowCloseIcon="true">
+    <DialogTemplates>
+        <Header>@dialogHeader</Header>
+        <Content>@dialogContent</Content>
+    </DialogTemplates>
+    <DialogButtons>
+        <DialogButton Content="OK" IsPrimary="true" OnClick="@CloseDialog" />
+    </DialogButtons>
+</SfDialog>
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    private Invitation invitation = new();
+    private bool showDialog = false;
+    private string dialogHeader = "";
+    private string dialogContent = "";
+
+    protected async override Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+        }
+    }
+
+    private async Task OnSubmitAsync()
+    {
+        try
+        {
+            await InvitationService.InviteUserAsync(invitation.Email, tenantId);
+            dialogHeader = "Success";
+            dialogContent = $"Invitation sent successfully to {invitation.Email}. Please check spam / junk folder.";
+            showDialog = true;
+            invitation.Email = ""; // Clear the form
+        }
+        catch (Exception ex)
+        {
+            dialogHeader = "Error";
+            dialogContent = $"Failed to send invitation: {ex.Message}";
+            showDialog = true;
+        }
+    }
+
+    private void CloseDialog()
+    {
+        showDialog = false;
+    }
+}

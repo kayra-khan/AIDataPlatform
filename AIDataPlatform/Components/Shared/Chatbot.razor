@@ -1,0 +1,58 @@
+﻿@using Syncfusion.Blazor
+@using Syncfusion.Blazor.Inputs
+@using System.Collections.ObjectModel
+@using Syncfusion.Blazor.Popups
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.InteractiveChat
+
+@inject AIDataPlatform.Services.AI.AIService AIService
+
+@rendermode InteractiveServer
+
+<SfDialog @ref="chatDialog" AllowPrerender="true" Height="80vh" Width="600px" IsModal="true" Visible="@isVisible">
+    <DialogTemplates>
+        <Content>
+            <SfAIAssistView PromptRequested="@PromptRequest" ResponseIconCss="e-icons e-assistview-icon">
+                <AssistViews>
+                    <AssistView ShowClearButton=true></AssistView>
+                    <AssistView>
+                        <BannerTemplate>
+                            <div class="banner-content">
+                                <div class="e-icons e-assistview-icon"></div>
+                                <h3>AI Assistance</h3>
+                                <i>To get started, provide input or choose a suggestion.</i>
+                            </div>
+                        </BannerTemplate>
+                    </AssistView>
+                </AssistViews>
+            </SfAIAssistView>
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="CloseDialog">Close</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+</SfDialog>
+<SfFab id="fabElem" Content="AI Assist" IconCss="e-icons e-assistview-icon" OnClick="@DialogOpenClose"></SfFab>
+
+@code {
+    private SfDialog? chatDialog;
+    private bool isVisible = false; // Flag to check if the chat window is minimized. default is false
+
+    private async Task PromptRequest(AssistViewPromptRequestedEventArgs args)
+    {
+        var response = await AIService.SendSemanticPromptChatCompletionAsync(args.Prompt);
+        args.Response = response.ToString();
+    }
+
+    private async Task CloseDialog()
+    {
+        await chatDialog.HideAsync();
+        DialogOpenClose();
+    }
+
+    // Minimize the chat window
+    private void DialogOpenClose()
+    {
+        isVisible = !isVisible;
+    }
+}

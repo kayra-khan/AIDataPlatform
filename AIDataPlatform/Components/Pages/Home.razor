@@ -1,0 +1,125 @@
+﻿@page "/"
+
+@using System.ComponentModel.DataAnnotations
+@using System.Timers
+@using Radzen
+@using Syncfusion.Blazor.Layouts
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.Cards
+@using Syncfusion.Blazor.Charts
+@using Radzen.Blazor
+
+@inject AIDataPlatform.Services.Storage.BlobStorageService BlobStorageService
+
+@attribute [Authorize]
+
+<h1>Dashboard</h1>
+
+<SfDashboardLayout Columns="4" CellAspectRatio="3">
+    <DashboardLayoutPanels>
+        <DashboardLayoutPanel Id="panel1" Column="0">
+            <HeaderTemplate>
+                Amount of Documents
+                <SfIcon IconCss="e-icons e-file-document"></SfIcon>
+            </HeaderTemplate>
+            <ContentTemplate>
+                <SfCard>
+                    <CardContent Content="@documentCount"></CardContent>
+                </SfCard>
+            </ContentTemplate>
+        </DashboardLayoutPanel>
+
+        <DashboardLayoutPanel Column="1" Row="0" SizeX="1" SizeY="2">
+            <HeaderTemplate>
+                Document Types
+            </HeaderTemplate>
+            <ContentTemplate>
+                <SfAccumulationChart EnableAnimation="true" EnableBorderOnMouseMove="false" EnableSmartLabels="false">
+                    <AccumulationChartBorder Color="transparent"></AccumulationChartBorder>
+                    <AccumulationChartTooltipSettings Enable="true" Format="${point.x}" FadeOutDuration="1.0"></AccumulationChartTooltipSettings>
+                    <AccumulationChartSeriesCollection>
+                        <AccumulationChartSeries DataSource="@PieChartDataCollection" Radius="75%" XName="Type" YName="Percentage" InnerRadius="40%" Palettes="@palettes" StartAngle="270" EndAngle="270">
+                            <AccumulationChartSeriesBorder Width="3"></AccumulationChartSeriesBorder>
+                            <AccumulationDataLabelSettings Visible="true" Name="TextMapping" Position="AccumulationLabelPosition.Outside">
+                                <AccumulationChartConnector Length="10px" Type="ConnectorType.Curve"></AccumulationChartConnector>
+                            </AccumulationDataLabelSettings>
+                        </AccumulationChartSeries>
+                    </AccumulationChartSeriesCollection>
+                    <AccumulationChartLegendSettings Visible="false"></AccumulationChartLegendSettings>
+                </SfAccumulationChart>
+            </ContentTemplate>
+        </DashboardLayoutPanel>
+    </DashboardLayoutPanels>
+</SfDashboardLayout>
+
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+    
+    private SfChart? documentTypeChart;
+    private string? documentCount { get; set; }
+    private string? shareCount { get; set; }
+    private bool? isLayoutRender;
+    private Timer? timer;
+    private string[] palettes = new string[] { "#61EFCD", "#CDDE1F", "#FEC200", "#CA765A", "#2485FA", "#F57D7D", "#C152D2",
+    "#8854D9", "#3D4EB8", "#00BCD7","#4472c4", "#ed7d31", "#ffc000", "#70ad47", "#5b9bd5", "#c1c1c1", "#6f6fe2", "#e269ae", "#9e480e", "#997300" };
+    
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = new();
+    
+    private List<ChartData> PieChartDataCollection { get; set; } = new List<ChartData>
+    {
+        new ChartData { Type = "PDF : 1 (12%)", Percentage = 12, TextMapping = "Pdf, 30 <br/>12%"},
+        new ChartData { Type = "Word : 20 (8%)", Percentage = 8, TextMapping = "Word, 20 <br/>8%"},
+        new ChartData { Type = "Excel : 40 (16%)",  Percentage = 16, TextMapping = "Excel, 40 <br/>16%"},
+        new ChartData { Type = "Powerpoint : 90 (36%)", Percentage = 36, TextMapping = "Powerpoint, 90 <br/>36%"},
+        new ChartData { Type = "Others : 27 (11%)", Percentage = 11, TextMapping = "Others, 27 <br/>11%"}
+    };
+
+    public class ChartData
+    {
+        public string? Period { get; set; }
+        public string? Type { get; set; }
+        public double? Percentage { get; set; }
+        public string? TextMapping { get; set; }
+        public string? AnnotationX { get; set; }
+        public string? AnnotationY { get; set; }
+        public string? PointColor { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+	{
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+        }
+        var blobItems = await BlobStorageService.GetBlobsAsync(tenantId, exclude: "_cmp.pdf");
+
+		documentCount = blobItems?.Count().ToString();
+		shareCount = "647";
+	}
+
+    void OnLogin(LoginArgs args, string name)
+    {
+        Console.WriteLine(args);
+    }
+    
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [DataType(System.ComponentModel.DataAnnotations.DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [Display(Name = "Remember me?")]
+        public bool RememberMe { get; set; }
+    }
+}

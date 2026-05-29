@@ -1,0 +1,129 @@
+﻿@page "/test"
+
+@implements IDisposable
+
+@using Syncfusion.Blazor.Navigations
+
+@inject NavigationManager NavigationManager
+
+@rendermode InteractiveServer
+
+<div id="control-section">
+    <div id="wrapper">
+        <SfSidebar class="sidebar-menu" Target="main" Width="220px" DockSize="50px" EnableDock="true" @bind-IsOpen="SidebarToggle" Type="@SidebarType.Auto">
+            <ChildContent>
+                <div class="main-menu">
+                    <div>
+                        <SfMenu CssClass="dock-menu" Items="@MainMenuItems" Orientation="@VerOrientation"></SfMenu>
+                    </div>
+                </div>
+            </ChildContent>
+        </SfSidebar>
+        <div>
+            <SfToolbar>
+                <ToolbarEvents Clicked="@Toggle"></ToolbarEvents>
+                <ToolbarItems>
+                    <ToolbarItem PrefixIcon="e-icons e-menu" Id="navigation"></ToolbarItem>
+                    <ToolbarItem>
+                        <Template>
+                            <div class="e-folder">
+                                <div class="e-folder-name">Navigation Pane</div>
+                            </div>
+                        </Template>
+                    </ToolbarItem>
+                </ToolbarItems>
+            </SfToolbar>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? currentUrl;
+
+    // Specifies the orientation type of Menu component.
+    public Orientation VerOrientation = Orientation.Vertical;
+
+    // Specify the value of Sidebar component state. It indicates whether the sidebar component is in an open/close state.
+    public bool SidebarToggle = false;
+
+    // Specifies the value of Menu component Datasource property.
+    public List<MenuItem> MainMenuItems = new List<MenuItem>{
+        new MenuItem {
+            Text = "Overview", IconCss = "e-icons e-",
+                Items = new List<MenuItem> {
+                    new MenuItem{ Text = "Home" },
+                    new MenuItem{ Text = "About" },
+                    new MenuItem{ Text = "Contact" }
+                }
+            },
+        new MenuItem {
+            Text = "Upload",
+            IconCss = "e-icons e-circle-add",
+            Items = new List<MenuItem> {
+                new MenuItem{ Text = "" }
+            }
+        }
+    };
+
+    // Specifies the event handler for Clicked event in Toolbar component.
+    public void Toggle(ClickEventArgs args)
+    {
+        if (args.Item.Id == "navigation")
+        {
+            SidebarToggle = !SidebarToggle;
+        }
+    }
+
+    public class MenuItem
+    {
+        public string? Text { get; set; }
+        public string? IconCss { get; set; }
+        public string? Url { get; set; }
+        public bool IsVisible { get; set; } = true;
+        public List<MenuItem>? Items { get; set; }
+
+        public MenuItem()
+        {
+            Items = new List<MenuItem>();
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+}
+<style>
+    .e-sidebar {
+        background: transparent;
+    }
+
+    .e-folder {
+        text-align: center;
+    }
+
+    /* Specifies the styles for Menu component */
+    .sidebar-menu .e-menu-container ul .e-menu-item.e-menu-caret-icon {
+        width: 220px;
+    }
+
+    .e-close .e-menu-container ul .e-menu-item {
+        width: 50px;
+    }
+
+    <!-- if menu closed, dont show text in menu -->
+    .sidebar-menu.e-dock.e-close .e-menu-container ul.e-menu {
+        font-size: 0;
+    }
+
+    <!-- hide the scrollbar when toggling close -->
+    .sidebar-menu, .e-menu-wrapper, .e-menu-container ul {
+        overflow: hidden;
+    }
+</style>

@@ -1,0 +1,155 @@
+﻿@using MudBlazor
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Forms
+
+@inject AIDataPlatform.Services.Search.SearchService SearchService
+@inject AIDataPlatform.Services.AI.AIService AIService
+@inject AIDataPlatform.Services.Database.CosmosDbService CosmosDbService
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IJSRuntime JSRuntime
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<MudDrawer @bind-Open="@_drawerOpen" Elevation="1" Variant="@DrawerVariant.Mini" OpenMiniOnHover="true" ClipMode="DrawerClipMode.Always" Width="240px" MiniWidth="56px">
+    @if (_drawerOpen)
+    {
+        <MudDrawerHeader>
+            <MudText Typo="Typo.h6">AIDataPlatform</MudText>
+        </MudDrawerHeader>
+    }
+    <MudNavMenu>
+        <MudNavGroup Title="Overview" Icon="@Icons.Material.Filled.Home" Expanded="true">
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Dashboard">Home</MudNavLink>
+            <MudNavLink Href="/about" Icon="@Icons.Material.Filled.Info">About</MudNavLink>
+            <MudNavLink Href="/contact" Icon="@Icons.Material.Filled.ContactMail">Contact</MudNavLink>
+        </MudNavGroup>
+        
+        @if (claimsPrincipal?.Identity?.IsAuthenticated == true)
+        {
+            <MudNavGroup Title="Tools" Icon="@Icons.Material.Filled.Build" Expanded="false">
+                <MudNavLink Href="/upload" Icon="@Icons.Material.Filled.Upload">Upload</MudNavLink>
+                <MudNavLink Href="/form" Icon="@Icons.Material.Filled.Assignment">Form</MudNavLink>
+                <MudNavLink Href="/filemanager" Icon="@Icons.Material.Filled.Folder">File Manager</MudNavLink>
+                <MudNavLink Href="/search" Icon="@Icons.Material.Filled.Search">AI Search</MudNavLink>
+                <MudNavLink Href="/chat" Icon="@Icons.Material.Filled.Chat">Chat</MudNavLink>
+            </MudNavGroup>
+            
+            <MudNavGroup Title="User Management" Icon="@Icons.Material.Filled.People" Expanded="false">
+                <MudNavLink Href="/inviteuser" Icon="@Icons.Material.Filled.PersonAdd">Invite</MudNavLink>
+            </MudNavGroup>
+            
+            <MudNavGroup Title="Account" Icon="@Icons.Material.Filled.AccountCircle" Expanded="false">
+                <MudNavLink Href="/Account/Manage" Icon="@Icons.Material.Filled.Settings">Profile</MudNavLink>
+                <MudNavLink OnClick="@SubmitLogoutForm" Icon="@Icons.Material.Filled.Logout">Logout</MudNavLink>
+            </MudNavGroup>
+        }
+        else
+        {
+            <MudNavGroup Title="Account" Icon="@Icons.Material.Filled.AccountCircle" Expanded="false">
+                <MudNavLink Href="/Account/Login" Icon="@Icons.Material.Filled.Login">Login</MudNavLink>
+                <MudNavLink Href="/Account/Register" Icon="@Icons.Material.Filled.PersonAdd">Register</MudNavLink>
+            </MudNavGroup>
+        }
+    </MudNavMenu>
+</MudDrawer>
+
+<MudAppBar Elevation="1">
+    <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@ToggleDrawer" />
+    <MudSpacer />
+    <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Inherit" OnClick="@OpenSearchDialog" />
+</MudAppBar>
+
+<MudDialog @bind-IsVisible="aiSearchDialog" Options="dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Search" Class="mr-3" /> Global Search
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <div style="min-height: 400px;">
+            <Dms.Components.Pages.Search />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => aiSearchDialog = false)">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<form @ref="logoutForm" action="Account/Logout" method="post" style="display:none">
+    <AntiforgeryToken />
+    <input type="hidden" name="returnUrl" value="@currentUrl" />
+</form>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool aiSearchDialog = false;
+    private string currentUrl = "";
+    private ElementReference logoutForm;
+
+    public AuthenticationState? authState { get; set; }
+    public ClaimsPrincipal? claimsPrincipal { get; set; }
+
+    private DialogOptions dialogOptions = new DialogOptions()
+    {
+        MaxWidth = MaxWidth.Medium,
+        FullWidth = true,
+        CloseButton = true,
+        BackdropClick = false,
+        CloseOnEscapeKey = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Get the current URL for the return URL
+        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+
+        // Subscribe to location changes
+        NavigationManager.LocationChanged += OnLocationChanged;
+
+        // Get the current user's claims
+        authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        claimsPrincipal = authState.User;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        var uri = new Uri(args.Location);
+        if (uri.AbsolutePath.Equals("/account/login", StringComparison.OrdinalIgnoreCase) ||
+            uri.AbsolutePath.Equals("/account/register", StringComparison.OrdinalIgnoreCase))
+        {
+            NavigationManager.NavigateTo(uri.AbsoluteUri, forceLoad: true);
+        }
+        else
+        {
+            aiSearchDialog = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleDrawer()
+    {
+        _drawerOpen = !_drawerOpen;
+    }
+
+    private void OpenSearchDialog()
+    {
+        aiSearchDialog = true;
+    }
+
+    private async Task SubmitLogoutForm()
+    {
+        // Update the current URL before submitting
+        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+
+        // Submit the form
+        await JSRuntime.InvokeVoidAsync("HTMLFormElement.prototype.submit.call", logoutForm);
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+}

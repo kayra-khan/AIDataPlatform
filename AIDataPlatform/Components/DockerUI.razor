@@ -1,0 +1,242 @@
+@page "/docker"
+@using Docker.DotNet.Models
+@using AIDataPlatform.Services
+@inject IDockerService DockerService
+@inject ILogger<DockerUI> Logger
+
+<div class="docker-ui">
+    <div class="docker-header">
+        <h3>Docker Management</h3>
+        <div class="docker-actions">
+            <button class="btn btn-primary" @onclick="RefreshContainers">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="docker-content">
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Containers</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (_containers == null)
+                        {
+                            <div class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        }
+                        else if (!_containers.Any())
+                        {
+                            <div class="alert alert-info">No containers found</div>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Image</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var container in _containers)
+                                        {
+                                            <tr>
+                                                <td>@(container.Names.FirstOrDefault()?.TrimStart('/'))</td>
+                                                <td>@container.Image</td>
+                                                <td>
+                                                    <span class="badge @(container.State == "running" ? "bg-success" : "bg-secondary")">
+                                                        @container.State
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <div class="btn-group">
+                                                        @if (container.State != "running")
+                                                        {
+                                                            <button class="btn btn-sm btn-success" @onclick="() => StartContainer(container.ID)">
+                                                                <i class="bi bi-play-fill"></i>
+                                                            </button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button class="btn btn-sm btn-warning" @onclick="() => StopContainer(container.ID)">
+                                                                <i class="bi bi-stop-fill"></i>
+                                                            </button>
+                                                        }
+                                                        <button class="btn btn-sm btn-danger" @onclick="() => RemoveContainer(container.ID)">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Images</h5>
+                    </div>
+                    <div class="card-body">
+                        @if (_images == null)
+                        {
+                            <div class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        }
+                        else if (!_images.Any())
+                        {
+                            <div class="alert alert-info">No images found</div>
+                        }
+                        else
+                        {
+                            <div class="list-group">
+                                @foreach (var image in _images)
+                                {
+                                    <div class="list-group-item">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h6 class="mb-1">@(image.RepoTags?.FirstOrDefault() ?? image.ID)</h6>
+                                                <small class="text-muted">Size: @(image.Size / 1024 / 1024) MB</small>
+                                            </div>
+                                            <button class="btn btn-sm btn-primary" @onclick="() => CreateContainer(image.RepoTags?.FirstOrDefault() ?? image.ID)">
+                                                <i class="bi bi-plus-circle"></i> Run
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .docker-ui {
+        padding: 20px;
+    }
+
+    .docker-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .docker-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .card {
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .table th {
+        font-weight: 600;
+    }
+
+    .btn-group {
+        gap: 5px;
+    }
+</style>
+
+@code {
+    private IList<ContainerListResponse> _containers;
+    private IList<ImagesListResponse> _images;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshData();
+    }
+
+    private async Task RefreshData()
+    {
+        try
+        {
+            _containers = await DockerService.GetContainersAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error refreshing Docker data");
+        }
+    }
+
+    private async Task RefreshContainers()
+    {
+        await RefreshData();
+    }
+
+    private async Task StartContainer(string containerId)
+    {
+        try
+        {
+            await DockerService.StartContainerAsync(containerId);
+            await RefreshData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error starting container {ContainerId}", containerId);
+        }
+    }
+
+    private async Task StopContainer(string containerId)
+    {
+        try
+        {
+            await DockerService.StopContainerAsync(containerId);
+            await RefreshData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error stopping container {ContainerId}", containerId);
+        }
+    }
+
+    private async Task RemoveContainer(string containerId)
+    {
+        try
+        {
+            await DockerService.RemoveContainerAsync(containerId);
+            await RefreshData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error removing container {ContainerId}", containerId);
+        }
+    }
+
+    private async Task CreateContainer(string image)
+    {
+        try
+        {
+            var containerName = $"{image.Split(':').First()}-{DateTime.Now:yyyyMMddHHmmss}";
+            await DockerService.CreateBrowserContainerAsync(containerName);
+            await RefreshData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating container from image {Image}", image);
+        }
+    }
+} 

@@ -1,0 +1,97 @@
+﻿@page "/upload"
+@using Azure.Storage.Blobs
+@using Syncfusion.Blazor
+@using Syncfusion.Blazor.Inputs
+
+@inject AIDataPlatform.Services.Storage.BlobStorageService BlobStorageService
+@inject AIDataPlatform.Services.DocumentIngestion.PythonIngestionService PythonIngestionService
+@inject IConfiguration Configuration
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<h3>Upload Documents</h3>
+
+
+<SfUploader DropEffect="DropEffect.Copy" AllowedExtensions=".pdf,.docx,.png,.jpg,.jpeg,.tiff" AllowMultiple=@true AutoUpload="true">
+    <UploaderEvents ValueChange="@OnChangeAsync" OnRemove="@OnRemoveAsync"></UploaderEvents>
+</SfUploader>
+
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    private BlobContainerClient? blobContainerClient;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+        }
+    }
+
+    private async Task OnChangeAsync(UploadChangeEventArgs args)
+    {
+        try
+        {
+            // Check if Python API should be used
+            var usePythonApi = Configuration.GetValue<bool>("DocumentIngestion:UsePythonApi");
+
+            foreach (var file in args.Files)
+            {
+                if (usePythonApi)
+                {
+                    // Route to Python API
+                    await PythonIngestionService.UploadDocumentAsync(tenantId: tenantId, file);
+                }
+                else
+                {
+                    // Route to Azure Blob Storage
+                    await BlobStorageService.UploadDocumentAsync(tenantId: tenantId, file);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    private async Task OnRemoveAsync(RemovingEventArgs args)
+    {
+        foreach (var file in args.FilesData)
+        {
+            string blobName = Path.GetFileName(file.Name);
+
+            await BlobStorageService.DeleteBlobAsync($"{tenantId}-in", blobName);
+        }
+    }
+}
+
+
+<style type="text/css" class="cssStyles">
+    /* To specify height */
+    .e-upload.e-control-wrapper, .e-bigger.e-small.e-upload.e-control-wrapper {
+        height: 40vh;
+        width: 80vw;
+    }
+
+    .e-upload-drag-hover {
+        background-color: rgba(0, 0, 0, 0.2);
+    }
+
+    .e-file-select-wrap {
+        display: flex; /* Use Flexbox */
+        justify-content: center; /* Center horizontally */
+        align-items: center; /* Center vertically */
+        height: 100%;
+    }
+</style>
+

@@ -1,0 +1,126 @@
+﻿@using Syncfusion.Blazor.DocumentEditor
+@using Newtonsoft.Json
+@using System.Text.Json
+
+
+@rendermode InteractiveServer
+
+<SfDocumentEditorContainer @ref="documentEditorContainer" Height="100%" EnableToolbar="true" ToolbarItems="@toolbarItems">
+	<DocumentEditorContainerEvents Created="@OnCreatedAsync" OnToolbarClick="@ClickAction"></DocumentEditorContainerEvents>
+</SfDocumentEditorContainer>
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    [Parameter]
+    public string? BlobName { get; set; }
+
+    private SfDocumentEditorContainer? documentEditorContainer;
+    string? sfdtString;
+    List<Object> toolbarItems = new() { new CustomToolbarItemModel() { Id = "save", Text = "Save", PrefixIcon = "e-icons e-save" }, "New", "Open", "Separator", "Undo", "Redo", "Separator", "Image", "Table", "Hyperlink", "Bookmark", "TableOfContents", "Separator", "Header", "Footer", "PageSetup", "PageNumber", "Break", "InsertFootnote", "InsertEndnote", "Separator", "Find", "Separator", "Comments", "TrackChanges", "Separator", "LocalClipboard", "RestrictEditing", "Separator", "FormFields", "UpdateFields" };
+
+
+    // Preloads document into memory for ingestion
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+        }
+
+        using var blobMemoryStream = await BlobStorageService.DownloadBlobAsync(tenantId: tenantId, containerName: tenantId, BlobName);
+
+        var document = WordDocument.Load(blobMemoryStream, ImportFormatType.Docx);
+
+        sfdtString = System.Text.Json.JsonSerializer.Serialize(document);
+
+        document.Dispose();
+        document = null;
+    }
+
+
+    // Loads document into editor from memory
+    private async Task LoadDocumentAsync()
+    {
+        SfDocumentEditor documentEditor = documentEditorContainer.DocumentEditor;
+
+        await documentEditor.OpenAsync(sfdtString);
+
+        // To observe the memory go down, null out the reference of sfdtString variable.
+        sfdtString = null;
+
+        documentEditorContainer.ResizeAsync();
+    }
+
+    // Triggers after component is created
+    public async void OnCreatedAsync(object args)
+    {
+        if (!string.IsNullOrEmpty(BlobName))
+        {
+            await LoadDocumentAsync();
+        }
+    }
+
+    public async void ClickAction(ClickEventArgs item)
+    {
+        if (item.Item.Id == "save")
+        {
+            SfDocumentEditor documentEditor = documentEditorContainer.DocumentEditor;
+
+            var base64Data = await documentEditor.SaveAsBlobAsync(FormatType.Docx);
+
+            byte[] data = Convert.FromBase64String(base64Data);
+
+            // To observe the memory go down, null out the reference of base64Data variable.
+            base64Data = null;
+
+            // Word document memory stream
+            using MemoryStream memoryStream = new (data);
+
+            // To observe the memory go down, null out the reference of data variable.
+            data = null;
+
+            if (memoryStream != null)
+            {
+                await BlobStorageService.UploadBlobAsync(tenantId: tenantId, $"{BlobName}", memoryStream);
+            }
+        }
+    }
+}
+
+
+@*
+    private async Task LoadDocumentAsync()
+    {
+        using var blobMemoryStream = await BlobStorageService.DownloadBlobAsync("contoso-out", BlobName);
+
+        var document = WordDocument.Load(blobMemoryStream, ImportFormatType.Docx);
+
+        sfdtString = System.Text.Json.JsonSerializer.Serialize(document);
+
+        document.Dispose();
+        document = null;
+
+        SfDocumentEditor editor = documentEditorContainer.DocumentEditor;
+
+        await editor.OpenAsync(sfdtString);
+
+        // To observe the memory go down, null out the reference of sfdtString variable.
+        sfdtString = null;
+
+        documentEditorContainer.ResizeAsync();
+    }
+
+    public async void OnCreatedAsync(object args)
+    {
+        if (!string.IsNullOrEmpty(BlobName))
+        {
+            await LoadDocumentAsync();
+        }
+    }
+*@

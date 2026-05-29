@@ -1,0 +1,78 @@
+﻿@page "/accept-invitation/{UserId}/{EncodedToken}"
+
+@using AIDataPlatform.Services.Communication
+
+@inject InvitationService InvitationService
+@inject NavigationManager NavigationManager
+
+@rendermode InteractiveServer
+
+<h3>Accept Invitation</h3>
+
+@if (isAccepted == null)
+{
+    <p>Loading...</p>
+}
+else if (isAccepted == true)
+{
+
+    <div class="col-md-6">
+        <EditForm Model="@passwordModel" OnValidSubmit="@HandleValidSubmitAsync">
+            <div>
+                <label>Password:</label>
+                <InputText @bind-Value="passwordModel.Password" type="password" />
+            </div>
+            <div>
+                <label>Confirm Password:</label>
+                <InputText @bind-Value="passwordModel.ConfirmPassword" type="password" />
+            </div>
+            <button type="submit">Set Password</button>
+        </EditForm>
+    </div>
+}
+else
+{
+    <p>Invalid or expired invitation.</p>
+}
+
+@code {
+    [Parameter]
+    public string? UserId { get; set; }
+    [Parameter]
+    public string? EncodedToken { get; set; }
+
+    private string? token;
+    private bool? isAccepted;
+    private PasswordModel passwordModel = new ();
+
+    protected async override Task OnInitializedAsync()
+    {
+        // URL decode the token
+        token = Uri.UnescapeDataString(EncodedToken);
+
+        var invitation = await InvitationService.GetInvitationByTokenAsync(token);
+
+        if (invitation != null)
+        {
+            isAccepted = true;
+        }
+        else
+        {
+            isAccepted = false;
+        }
+    }
+
+    private async Task HandleValidSubmitAsync()
+    {
+        var result = await InvitationService.SetUserPasswordAsync(UserId, token, passwordModel.Password);
+        
+        if (result)
+        {
+            NavigationManager.NavigateTo("/account/login", forceLoad: true);
+        }
+        else
+        {
+            isAccepted = false;
+        }
+    }
+}

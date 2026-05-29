@@ -1,0 +1,74 @@
+﻿@inherits LayoutComponentBase
+
+@using AIDataPlatform.Components.Shared
+@using AIDataPlatform.Services.Tenant
+@using MudBlazor
+
+@inject TenantProvider TenantProvider
+
+@* Required *@
+<MudThemeProvider Theme="@customTheme" />
+<MudPopoverProvider />
+
+@* Needed for dialogs *@
+<MudDialogProvider />
+
+@* Needed for snackbars *@
+<MudSnackbarProvider />
+
+<MudLayout>
+    <NavMenu />
+    <MudMainContent>
+        <div class="content px-4">
+            @Body
+        </div>
+        <Chatbot />
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+    
+    private readonly MudTheme customTheme = new ()
+    {
+        PaletteLight = new PaletteLight()
+        {
+            Primary = Colors.Blue.Default,
+            Secondary = Colors.Green.Accent4,
+            AppbarBackground = Colors.Blue.Accent2,
+        },
+        PaletteDark = new PaletteDark()
+        {
+            Primary = Colors.Blue.Lighten1
+        },
+
+        LayoutProperties = new LayoutProperties()
+        {
+            DrawerWidthLeft = "260px",
+            DrawerWidthRight = "300px"
+        }
+    };
+
+    protected async override Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+
+            await TenantProvider.SetTenantIdAsync(tenantId);
+        }
+    }
+}
+
+<style>
+    .content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+    }
+</style>

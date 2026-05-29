@@ -1,0 +1,186 @@
+@page "/docker-stream"
+@using AIDataPlatform.Services
+@inject IDockerService DockerService
+@inject ILogger<DockerStream> Logger
+@implements IDisposable
+
+<div class="docker-stream">
+    <div class="docker-header">
+        <h3>Docker Browser Stream</h3>
+        <div class="docker-actions">
+            <button class="btn btn-primary" @onclick="CreateNewBrowser">
+                <i class="bi bi-plus-circle"></i> New Browser
+            </button>
+            <button class="btn btn-secondary" @onclick="RefreshContainer">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="docker-content">
+        @if (_containerId == null)
+        {
+            <div class="text-center p-5">
+                <h4>No active browser session</h4>
+                <p>Click "New Browser" to start a new browser session</p>
+            </div>
+        }
+        else
+        {
+            <div class="browser-container">
+                <div class="browser-header">
+                    <span class="badge bg-info">Container ID: @_containerId</span>
+                    <span class="badge bg-success">Status: @_containerStatus</span>
+                    <button class="btn btn-sm btn-danger" @onclick="StopAndRemoveContainer">
+                        <i class="bi bi-trash"></i> Stop & Remove
+                    </button>
+                </div>
+                <div class="browser-frame">
+                    <!--
+                    src="@($"http://localhost:6080/vnc.html?resize=downscale&autoconnect=1")"
+                    -->
+                    <iframe id="novnc-frame"
+                            src="@($"https://test.container.ergenekon.ai/vnc.html?resize=downscale&autoconnect=1")"
+                            style="width: 100%; height: 100%; border: none;">
+                    </iframe>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .docker-stream {
+        padding: 20px;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .docker-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .docker-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .docker-content {
+        flex: 1;
+        background: #f5f5f5;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .browser-container {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .browser-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        padding: 10px;
+        background: #fff;
+        border-radius: 4px;
+    }
+
+    .browser-frame {
+        flex: 1;
+        background: #000;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+</style>
+
+@code {
+    private string _containerId;
+    private string _containerStatus;
+    private int _vncPort;
+    private System.Timers.Timer _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Set up the timer with proper thread handling
+        _refreshTimer = new System.Timers.Timer(5000); // Refresh every 5 seconds
+        _refreshTimer.Elapsed += async (sender, e) => 
+        {
+            await InvokeAsync(async () => 
+            {
+                await RefreshContainer();
+                StateHasChanged();
+            });
+        };
+
+        _refreshTimer.Start();
+
+
+        var containers = await DockerService.GetContainersAsync();
+        _containerId = containers.FirstOrDefault().ID;
+    }
+
+    private async Task CreateNewBrowser()
+    {
+        try
+        {
+            _containerId = await DockerService.CreateBrowserContainerAsync();
+            await RefreshContainer();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating browser container");
+        }
+    }
+
+    private async Task RefreshContainer()
+    {
+        if (string.IsNullOrEmpty(_containerId)) return;
+
+        try
+        {
+            var container = await DockerService.GetContainerDetailsAsync(_containerId);
+            _containerStatus = container.State.Status;
+            _vncPort = await DockerService.GetContainerVncPortAsync(_containerId);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error refreshing container {ContainerId}", _containerId);
+            _containerId = null;
+            _containerStatus = null;
+            _vncPort = 0;
+        }
+    }
+
+    private async Task StopAndRemoveContainer()
+    {
+        if (string.IsNullOrEmpty(_containerId)) return;
+
+        try
+        {
+            await DockerService.StopContainerAsync(_containerId);
+            await DockerService.RemoveContainerAsync(_containerId);
+            _containerId = null;
+            _containerStatus = null;
+            _vncPort = 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error stopping and removing container {ContainerId}", _containerId);
+        }
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Stop();
+        _refreshTimer?.Dispose();
+    }
+} 

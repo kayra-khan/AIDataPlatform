@@ -1,0 +1,525 @@
+﻿@page "/filemanager"
+
+@using Syncfusion.Blazor
+@using Syncfusion.Blazor.FileManager
+@using Syncfusion.Blazor.Popups
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.SfPdfViewer
+@using Syncfusion.Blazor.MultiColumnComboBox
+@using Azure.Storage
+@using Azure.Storage.Sas
+@using Azure.Storage.Blobs
+@using Azure.Storage.Blobs.Models
+@using AIDataPlatform.Components.Pages
+
+@inject AIDataPlatform.Services.Database.CosmosDbService CosmosDbService
+@inject AIDataPlatform.Services.AI.KernelMemoryService KernelMemoryService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<h3>FileManager</h3>
+
+@* sf file manager *@
+<SfFileManager ID="main" TValue="FileManagerDirectoryContent" EnableVirtualization="true" View="ViewType.Details">
+    <FileManagerEvents
+    TValue="FileManagerDirectoryContent" 
+    OnRead="@(args => OnReadAsync(args, data))"
+    ToolbarItemClicked="@OnToolbarClick"
+    OnMenuClick="@OnMenuClick"
+    Searching="@SearchingAsync">
+    </FileManagerEvents>
+    <FileManagerToolbarSettings ToolbarItems="@toolbarItems"></FileManagerToolbarSettings>
+    <FileManagerContextMenuSettings 
+    Layout="@(new string[] { "SortBy", "View", "Refresh", "|", "Details" })" 
+    File="@(new string[] { "Open", "Open in Form", "|", "Download", "Delete", "Rename", "Share", "|", "Versions", "Details" })" 
+    Folder="@(new string[] { "Open", "Delete", "Rename", "Details" })">
+    </FileManagerContextMenuSettings>
+</SfFileManager>
+
+@* sfdialog for share period time *@
+<SfDialog @ref="shareDialog" Width="300px" IsModal="true" ShowCloseIcon="true" Header="Enter share period in hours" Visible="false">
+    <DialogTemplates>
+        <Content>
+            <SfNumericTextBox TValue="byte" @bind-Value="sharePeriod" Min="1" Max="168"></SfNumericTextBox> @* max 7 days share *@
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="ShareDocument">Share</SfButton>
+            <SfButton OnClick="CloseDialog">Cancel</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+@* sfdialog to show share link dialog after entering the share period above *@
+<SfDialog @ref="sasUriDialog" Width="400px" IsModal="true" ShowCloseIcon="true" Header="Share link" Visible="false">
+    <DialogTemplates>
+        <Content>
+            <SfTextBox @bind-Value="sasUri" Readonly="true"></SfTextBox>
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="@CopyToClipboard">Copy</SfButton>
+            <SfButton OnClick="@CloseDialog">Close</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+@* sfdialog for pdf preview with sfpdfviewer *@
+<SfDialog @ref="pdfViewerPreviewDialog" Width="800px" Height="100%" IsModal="true" ShowCloseIcon="true" Header="PDF Preview" Visible="false">
+    <DialogTemplates>
+        <Content>
+            <SfPdfViewer2
+            DocumentPath="@documentPath"
+            Width="100%"
+            Height="100%">
+            </SfPdfViewer2>
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="@CloseDialog">Close</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+@* sfdialog for recycle bin with separate file manager *@
+<SfDialog @ref="recycleBinDialog" Width="800px" Height="100%" IsModal="true" ShowCloseIcon="true" Header="Recycle Bin" Visible="false">
+    <DialogTemplates>
+        <Content>
+            <SfFileManager @ref="recycleBinFileManager" TValue="FileManagerDirectoryContent" ID="recycleBinFileManager" EnableVirtualization="true">
+                <FileManagerEvents
+                TValue="FileManagerDirectoryContent" 
+                OnRead="@(args => OnReadAsync(args, dataRecycleBin))"
+                ToolbarItemClicked="@OnToolbarClick"
+                OnMenuClick="@OnMenuClick">
+                </FileManagerEvents>
+                <FileManagerToolbarSettings ToolbarItems="@toolbarItemsRecycleBin"></FileManagerToolbarSettings>
+                <FileManagerContextMenuSettings 
+                    Layout="@(new string[] { "SortBy", "View", "Refresh", "|", "Details" })"
+                    File="@(new string[] { "Open", "Restore", "|", "Details" })"
+                    Folder="@(new string[] { "Open", "|", "Details" })">
+                </FileManagerContextMenuSettings>
+            </SfFileManager>
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="@CloseDialog">Close</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+    <DialogEvents Opened="@OnDialogOpened"></DialogEvents>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+@* sfdialog for blob versions *@
+<SfDialog @ref="versionDialog" Width="800px" Height="100%" IsModal="true" ShowCloseIcon="true" Header="Versions" Visible="false">
+    <DialogTemplates>
+        <Content>
+            <SfGrid DataSource="@blobVersions" AllowResizing="true" AllowSorting="true" ContextMenuItems="@contextMenuItems">
+                <GridEvents ContextMenuItemClicked="@OnContextMenuClick" TValue="BlobItem"></GridEvents>
+                <GridColumns>
+                    <GridColumn Field=@nameof(BlobItem.Name) TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+                    <GridColumn Field="@nameof(BlobItem.VersionId)" HeaderText="VersionId" TextAlign="Syncfusion.Blazor.Grids.TextAlign.Right"></GridColumn>
+                </GridColumns>
+            </SfGrid>
+        </Content>
+        <FooterTemplate>
+            <SfButton OnClick="@CloseDialog">Close</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+@* sfdialog for office tools docx *@
+<SfDialog @ref="officeToolsDialog" Width="80%" Height="90%" IsModal="true" ShowCloseIcon="true" Header="Office Tools" Visible="false" AllowPrerender="true">
+    <DialogTemplates>
+        <Content>
+            @if(selectedBlobName != null && selectedBlobName.EndsWith("docx", StringComparison.OrdinalIgnoreCase))
+            {
+                <OfficeTools BlobName="@selectedBlobName" />
+            }
+        </Content>
+    </DialogTemplates>
+    <DialogAnimationSettings Effect="@animationEffect"></DialogAnimationSettings>
+</SfDialog>
+
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    private SfDialog? shareDialog;
+    private SfDialog? sasUriDialog;
+    private SfDialog? pdfViewerPreviewDialog;
+    private SfDialog? recycleBinDialog;
+    private SfDialog? versionDialog;
+    private SfDialog? officeToolsDialog;
+    private SfFileManager<FileManagerDirectoryContent>? recycleBinFileManager;
+    private byte sharePeriod = 1;
+    private string? sasUri;
+    private string? selectedBlobName;
+    private string? documentPath;
+    private List<BlobItem>? blobVersions;
+    private DialogEffect animationEffect { get; set; } = DialogEffect.Zoom; // animation effect for dialog opening
+
+    private List<FileManagerDirectoryContent>? data { get; set; } // data source for the file manager
+    private List<FileManagerDirectoryContent>? dataRecycleBin { get; set; } // data source for the recycle bin file manager
+    private List<ContextMenuItemModel>? contextMenuItems = new() { new ContextMenuItemModel { Text = "Restore", Target = ".e-content", Id = "restoreBlob", IconCss = "e-icons e-file-document" } };
+
+    // setting toolbar items and order
+    private List<ToolBarItemModel>? toolbarItems = new()
+    {
+        new ToolBarItemModel { 
+            Name = "Open",
+            TooltipText = "Open",
+            PrefixIcon = "e-icons e-notes"
+        },
+        new ToolBarItemModel { 
+            Name = "Open in Form",
+            TooltipText = "Open in Form",
+            PrefixIcon = "e-icons e-open-link"
+        },
+        new ToolBarItemModel {
+            Name = "Recycle Bin",
+            TooltipText = "Recycle Bin",
+            PrefixIcon = "e-icons e-trash"
+        },
+        new ToolBarItemModel { Name = "|" },
+        new ToolBarItemModel { Name = "Delete" },
+        new ToolBarItemModel { Name = "Download" },
+        new ToolBarItemModel { Name = "SortBy" },
+        new ToolBarItemModel { Name = "Refresh" },
+        new ToolBarItemModel { Name = "|" },
+        new ToolBarItemModel { Name = "Details" },        
+    };
+
+    // setting toolbar items and order for recycle bin
+    private List<ToolBarItemModel>? toolbarItemsRecycleBin = new()
+    {
+        new ToolBarItemModel {
+            Name = "Open",
+            TooltipText = "Open",
+            PrefixIcon = "e-icons e-notes"
+        },
+        new ToolBarItemModel {
+            Name = "Restore",
+            TooltipText = "Restore",
+            PrefixIcon = "e-icons e-check-tick"
+        },
+        new ToolBarItemModel { Name = "Refresh" },
+    };
+
+    protected async override Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+			tenantId = user.FindFirst("tenantId")?.Value;
+
+            // load data when the component is initialized. the data will be accesses in the OnReadAsync method
+            data = await GetDataAsync();
+        }
+    }
+
+    // this method will be called the first time and consecutive time when the file manager tries to read the content of a folder / sub folder
+    // args already contains information about the current folder path and the folder content depth 0
+    private async Task OnReadAsync(ReadEventArgs<FileManagerDirectoryContent> args, List<FileManagerDirectoryContent> dataSource)
+    {
+        string path = args.Path; // gets the current path property of the current folder
+        List<FileManagerDirectoryContent> fileDetails = args.Folder; // gets the current item details of the current folder
+        FileManagerResponse<FileManagerDirectoryContent> response = new FileManagerResponse<FileManagerDirectoryContent>();
+
+        if (path == "/") // if the filterpath contains a / it means it is the root folder
+        {
+            string ParentId = dataSource
+                .Where(x => x.FilterPath == string.Empty)
+                .Select(x => x.Id)
+                .First();
+            response.CWD = dataSource.FirstOrDefault(); // this sets the information in the directory
+            response.Files = dataSource
+                .Where(x => x.ParentId == ParentId)
+                .ToList(); // gets the data of the files in the current folder
+        }
+        else
+        {
+            var childItem = fileDetails.Count > 0 && fileDetails[0] != null 
+                ? fileDetails[0] 
+                : dataSource.FirstOrDefault(x => x.FilterPath == path);
+
+            response.CWD = childItem; // this sets the information in the directory
+            response.Files = childItem != null // set the detail of the files
+                ? dataSource
+                    .Where(x => x.ParentId == childItem?.Id)
+                    .ToList()
+                : new List<FileManagerDirectoryContent>();
+        }
+
+        await Task.Yield();
+        args.Response = response;
+    }
+
+    private async Task<List<FileManagerDirectoryContent>> GetDataAsync(bool? deleted = false)
+    {
+        List<FileManagerDirectoryContent> data = new ();
+
+        string? rootFolderName = deleted == false
+                ? "Data Structure"
+                : "Deleted Items";
+
+        // add first data filemanagerdirectorycontent for the root. if not added generally, file manager will throw an error
+        data.Add(new FileManagerDirectoryContent()
+            {
+                CaseSensitive = false,
+                DateCreated = default,
+                DateModified = default,
+                FilterPath = "",
+                FilterId = "",
+                HasChild = true,
+                Id = "0",
+                IsFile = false,
+                Name = rootFolderName,
+                ParentId = null, // the top root folder parent id is null because it has no parent
+                ShowHiddenItems = false,
+                Size = default,
+                Type = "folder"
+            });
+
+        var _blobInfos = await BlobStorageService.GetBlobsAsync(tenantId: tenantId, exclude: "_cmp.pdf", deleted: deleted);
+
+        //_blobInfos?.Where(x => x.Name.Contains("pdf"));
+
+        if (_blobInfos.Any())
+        {
+            // Group blobs by the CreatedOn date
+            var groupedBlobs = _blobInfos?.GroupBy(b => b.Property.CreatedOn.GetValueOrDefault().Date);
+
+            foreach (var group in groupedBlobs)
+            {
+                // Create a new FileManagerDirectoryContent for the folder
+                var folder = new FileManagerDirectoryContent()
+                    {
+                        CaseSensitive = false,
+                        DateCreated = group.Key, // Use the CreatedOn date as the folder name
+                        DateModified = group.Max(b => b.Property.LastModified.GetValueOrDefault().DateTime), // Use the latest LastModified date as the folder's modified date
+                        FilterPath = "/",
+                        FilterId = "0/",
+                        HasChild = true,
+                        Id = group.Key.ToString("yyyyMMdd"), // Use the CreatedOn date as the folder ID
+                        IsFile = false,
+                        Name = group.Key.ToString("yyyyMMdd"), // Use the CreatedOn date as the folder name
+                        ParentId = "0",
+                        ShowHiddenItems = false,
+                        Size = 0,
+                        Type = "folder"
+                    };
+
+                data.Add(folder);
+
+                // Add the blobs as children of the folder
+                foreach (var _blobInfo in group)
+                {
+                    // if blobname should be without guid prefix
+                    //int underscoreIndex = _blobInfo.Name.IndexOf('_');
+                    //string _blobName = underscoreIndex != -1 ? _blobInfo.Name.Substring(underscoreIndex + 1) : _blobInfo.Name;
+                    data.Add(new FileManagerDirectoryContent()
+                        {
+                            CaseSensitive = false,
+                            DateCreated = _blobInfo.Property.CreatedOn.GetValueOrDefault().DateTime,
+                            DateModified = _blobInfo.Property.LastModified.GetValueOrDefault().DateTime,
+                            FilterPath = $"/{folder.Id}/",
+                            FilterId = $"0/{folder.Id}/",
+                            HasChild = false,
+                            Id = _blobInfo.Name, // Use the blob name as the ID
+                            IsFile = true,
+                            Name = _blobInfo.Name?.Substring(_blobInfo.Name.IndexOf('_') + 1), //_blobInfo.Name,
+                            ParentId = folder.Id, // Set the ParentId to the folder's ID
+                            ShowHiddenItems = false,
+                            Size = _blobInfo.Property.ContentLength.GetValueOrDefault(),
+                            Type = _blobInfo.Name?.Split(".").Last()
+                        });
+                }
+            }
+        } // end of if
+
+        return data;
+    }
+
+    private async Task HandleFileOpenAsync(List<FileManagerDirectoryContent> fileDetails)
+    {
+        if (fileDetails.Count > 0)
+        {
+            var pdfName = fileDetails.FirstOrDefault()?.Id;
+            NavigationManager.NavigateTo($"/form/{pdfName}");
+        }
+
+        await Task.CompletedTask;
+    }
+
+    // when clicking on the toolbar item
+    private async Task OnToolbarClick(ToolbarClickEventArgs<FileManagerDirectoryContent> args)
+    {
+        if (args.Item.TooltipText == "Open in Form")
+        {
+            await HandleFileOpenAsync(args.FileDetails);
+        }
+        else if (args.Item.TooltipText == "Recycle Bin")
+        {
+            dataRecycleBin = await GetDataAsync(deleted: true);
+            await recycleBinDialog.ShowAsync();
+        }
+        else if (args.Item.TooltipText == "Restore")
+        {
+            //var restoredBlob = BlobStorageService.RestoreBlobWithVersioningAsync("contoso-out", args.FileDetails.FirstOrDefault()?.Name);
+            await AIDataPlatform.Helpers.DocumentHelper.RestoreDocumentAsync(tenantId: tenantId, args.FileDetails?.FirstOrDefault()?.Id?.Split("_")[0], KernelMemoryService, BlobStorageService, CosmosDbService);
+        }
+    }
+
+    // when clicking on the context menu item
+    private async Task OnMenuClick(MenuClickEventArgs<FileManagerDirectoryContent> args)
+    {
+        if (args.Item.Text == "Open in Form")
+        {
+            await HandleFileOpenAsync(args.FileDetails);
+        }
+        else if (args.Item.Text == "Share")
+        {
+            selectedBlobName = args.FileDetails.FirstOrDefault()?.Id;
+
+            await shareDialog.ShowAsync();
+        }
+        else if (args.Item.Text == "Open")
+        {
+            var selectedBlobName = args.FileDetails.FirstOrDefault()?.Id;
+
+            var fileExtension = Path.GetExtension(selectedBlobName).ToLower();
+
+            if (fileExtension == ".pdf")
+            {
+                await OpenPdfPreviewAsync(selectedBlobName);
+            }
+            else if (fileExtension == ".docx")
+            {
+                await OpenOfficeToolsDialogAsync(selectedBlobName);
+            }
+        }
+        else if (args.Item.Text == "Delete")
+        {
+            string? documentId = args.FileDetails?.FirstOrDefault()?.Id?.Split("_")[0];
+
+            await AIDataPlatform.Helpers.DocumentHelper.DeleteDocumentAsync(documentId, KernelMemoryService, BlobStorageService, CosmosDbService);
+        }
+        else if (args.Item.Text == "Versions")
+        {
+            string? documentId = args.FileDetails?.FirstOrDefault()?.Id?.Split("_")[0];
+            blobVersions = await BlobStorageService.GetBlobVersionAsync(tenantId: tenantId, "out", documentId);
+            await versionDialog.ShowAsync();
+
+        }
+    }
+
+    // sfgrid context menu click
+    private async Task OnContextMenuClick(ContextMenuClickEventArgs<BlobItem> args)
+    {
+        if (args.Item.Id == "restoreBlob")
+        {
+            var blobName = args.RowInfo?.RowData?.Name;
+            await BlobStorageService.RestoreBlobAsync("contoso-out", blobName, args.RowInfo?.RowData?.VersionId);
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private async Task OpenPdfPreviewAsync(string? pdfName)
+    {
+        if (!string.IsNullOrEmpty(pdfName))
+        {
+            await pdfViewerPreviewDialog.ShowAsync();
+
+            // !!! Parallelize the tasks by not using the await declaration !!!
+            var pdfBase64 = await PdfService.DownloadAndConvertPdfToBase64Async(pdfName, tenantId: tenantId);
+
+            if (pdfBase64 != null)
+            {
+                documentPath = $"data:application/pdf;base64,{pdfBase64}";
+            }
+        }
+    }
+
+    private async Task OpenOfficeToolsDialogAsync(string ?blobName)
+    {
+        await officeToolsDialog.ShowAsync();
+        selectedBlobName = blobName;
+    }
+
+    private async Task ShareDocument()
+    {
+        if (!string.IsNullOrEmpty(selectedBlobName))
+        {            
+            var uri = await BlobStorageService.GenerateSasUriAsync(tenantId: tenantId, blobName: selectedBlobName, shareTime: sharePeriod);
+            sasUri = uri.ToString();
+
+            await shareDialog.HideAsync();
+            await sasUriDialog.ShowAsync();
+        }
+    }
+
+    private async Task CopyToClipboard()
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", sasUri);
+    }
+
+    private async Task CloseDialog()
+    {
+        await shareDialog.HideAsync();
+        await sasUriDialog.HideAsync();
+        await pdfViewerPreviewDialog.HideAsync();
+        await recycleBinDialog.HideAsync();
+        await versionDialog.HideAsync();
+        await officeToolsDialog.HideAsync();
+    }
+
+    // search async
+    private Task<FileManagerResponse<FileManagerDirectoryContent>> SearchAsync(string path, string searchString)
+    {
+        FileManagerResponse<FileManagerDirectoryContent> response = new FileManagerResponse<FileManagerDirectoryContent>();
+        char[] i = new Char[] { '*' };
+
+        FileManagerDirectoryContent[] searchFiles = data.Select(x => x).Where(x => x.Name.ToLower().Contains(searchString.TrimStart(i).TrimEnd(i).ToLower())).Select(x => x).ToArray();
+
+        response.Files = searchFiles.ToList();
+
+        return Task.FromResult(response);
+    }
+
+    public async Task SearchingAsync(SearchEventArgs<FileManagerDirectoryContent> args)
+    {
+        args.Response = await SearchAsync(args.Path, args.SearchText);
+    }
+
+    private async Task OnDialogOpened()
+    {
+        await recycleBinFileManager.RefreshLayoutAsync();
+    }
+}
+
+@* old code for deleting a document
+else if (args.Item.Text == "Delete")
+{
+    string? documentId = args.FileDetails?.FirstOrDefault()?.Name?.Split("_")[0];
+
+    await AIDataPlatform.Helpers.DocumentDeletionHelper.DeleteDocumentAsync(documentId, KernelMemoryService, BlobStorageService, CosmosDbService);
+
+    var document = await CosmosDbService.GetDocumentByDocumentIdAsync(documentId);
+
+    // Parallelize the tasks by not using the await declaration
+    var blobRemoveTask = BlobStorageService.RemoveBlobAsync("contoso-out", args.FileDetails.FirstOrDefault()?.Name);
+    var cosmosDbRemoveTask = CosmosDbService.DeleteDocumentAsync<Document>(document);
+    var vectorDbRemoveTask =  KernelMemoryService.KernelMemory.DeleteDocumentAsync(documentId);
+
+    await Task.WhenAll(blobRemoveTask, cosmosDbRemoveTask, vectorDbRemoveTask);
+}
+*@

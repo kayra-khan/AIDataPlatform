@@ -1,0 +1,450 @@
+﻿@page "/form"
+@page "/form/{BlobName}"
+
+@using Syncfusion.Blazor
+@using Syncfusion.Blazor.SfPdfViewer
+@using Syncfusion.Blazor.Buttons
+@using Syncfusion.Blazor.Navigations
+@using Syncfusion.Blazor.DataForm
+@using Newtonsoft.Json
+@using Newtonsoft.Json.Linq
+@using Azure.AI.FormRecognizer.DocumentAnalysis
+
+@inject AIDataPlatform.Services.Database.CosmosDbService CosmosDbService
+
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+
+<!-- attribute [Authorize] -->
+
+<h3>Edit OCR Documents</h3>
+<div class="row">
+    <div class="col-md-6">
+        <h2>PDF Viewer</h2>
+        <SfPdfViewer2 
+        DocumentPath="@documentPath"
+        Width="100%" 
+        Height="600px"
+        EnableErrorDialog="false"
+        @ref="pdfViewer">
+            <PdfViewerEvents DocumentLoaded="@OnDocumentLoadedAsync" AnnotationMouseover="@OnAnnotationMouseover" AnnotationUnselected="@OnAnnotationMouseoverOut" ToolbarClicked="@ClickAction"></PdfViewerEvents>
+            <PdfViewerAnnotationSelectorSettings ResizerSize="0"></PdfViewerAnnotationSelectorSettings>
+            <PdfViewerAnnotationSettings AllowedInteractions="new List<AllowedInteraction> {AllowedInteraction.Select}"></PdfViewerAnnotationSettings>
+            <PdfViewerToolbarSettings CustomToolbarItems="@customToolbarItems"></PdfViewerToolbarSettings>
+        </SfPdfViewer2>
+    </div>
+    <div class="col-md-6">
+        <h2>Edit Form</h2>
+        @if (keyValuePairsList == null)
+        {
+            <p>Loading...</p>
+        }
+        else
+        {
+            <EditForm Model="@keyValuePairsList" OnValidSubmit="@HandleValidSubmit">
+                <div class="row">
+                    @foreach (var item in keyValuePairsList)
+                    {
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                @if (item.Value == null)
+                                {
+                                    item.Value = new Value();
+                                }
+                                <label for="@item.Key?.Content">@item.Key?.Content</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <InputText @bind-Value="@item.Value.Content" />
+                            </div>
+                        </div>
+                    }
+                </div>
+                <button type="submit" class="btn btn-primary">Submit</button>
+            </EditForm>
+        }
+    </div>
+</div>
+
+
+@code {
+    [CascadingParameter]
+    public Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+    private string? tenantId { get; set; }
+
+    [Parameter]
+    public string? BlobName { get; set; }
+    private string? documentPath { get; set; }
+    private List<Element>? keyValuePairsList { get; set; }
+    private SfPdfViewer2? pdfViewer;
+    private Document? document { get; set;}
+
+    private List<PdfToolbarItem> customToolbarItems = new ()
+    {
+        new PdfToolbarItem() {
+            Index = 0,
+            Template = __builder =>
+            {
+                <ToolbarItem PrefixIcon="e-icons e-save"
+                             Text="Save Document"
+                             TooltipText="Save Document"
+                             Id="saveDocument"
+                             Align=ItemAlign.Left>
+                </ToolbarItem>
+    },
+            CustomToolbarName = "saveDocument"
+        }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+
+        if (user.Identity.IsAuthenticated)
+        {
+            tenantId = user.FindFirst("tenantId")?.Value;
+
+            try
+            {
+                if (!string.IsNullOrEmpty(BlobName))
+                {
+                    string documentId = BlobName.Split("_")[0];
+
+                    // Parallelize the tasks by not using the await declaration
+                    var pdfTask = PdfService.DownloadAndConvertPdfToBase64Async(BlobName, tenantId: tenantId);
+                    var documentTask = CosmosDbService.GetDocumentByDocumentIdAsync(documentId); //CosmosDbService.QueryDocumentsAsync<Document>($"SELECT * FROM GlobalStore WHERE GlobalStore.DocumentId = '{documentId}'");
+                    //var documentTask = CosmosDbService.QueryDocumentsAsync($"SELECT * FROM GlobalStore WHERE GlobalStore.DocumentId = '{documentId}'");
+
+                    await Task.WhenAll(pdfTask, documentTask);
+
+                    var pdfBase64 = await pdfTask;
+                    document = await documentTask;
+
+					//var documents = await documentTask;
+
+                    if (pdfBase64 != null)
+                    {
+                        documentPath = $"data:application/pdf;base64,{pdfBase64}";
+                    }
+
+                    keyValuePairsList = document?.KeyValuePairs != null
+                        ? JsonConvert.DeserializeObject<List<Element>>(document.KeyValuePairs) ?? new List<Element>()
+                        : new List<Element>();
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+            }
+        }
+    }
+
+    // when document is loaded
+    protected async Task OnDocumentLoadedAsync()
+    {
+        try
+        {
+            //await AddTextMarkupAnnotation();
+            await AddPolygonAnnotation();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"couldnt add textmarkupannotation due to following error {ex.Message}");
+        }
+    }
+
+    // when hovering over annotation
+    protected async Task OnAnnotationMouseover(AnnotationMouseoverEventArgs args)
+    {
+        var annotationList = pdfViewer != null 
+        ? await pdfViewer.GetAnnotationsAsync() 
+        : new List<PdfAnnotation>();
+
+        PdfAnnotation? annotation = annotationList.FirstOrDefault(an => an.Id == args.AnnotationId);
+
+        if (annotation != null)
+        {
+            // set polygon annotation color to green
+            annotation.FillColor = "#008000";
+
+            // set text markup annotation color to green
+            annotation.Color = "#008000";
+
+            try
+            {
+                await pdfViewer.EditAnnotationAsync(annotation);
+                await pdfViewer.SelectAnnotationAsync(annotation.Id);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"couldnt edit annotation due to following error {ex.Message}");
+            }
+        }
+    }
+
+    // when leaving annotation area
+    protected async Task OnAnnotationMouseoverOut(AnnotationUnselectEventArgs args)
+    {
+        var annotationList = pdfViewer != null 
+            ? await pdfViewer.GetAnnotationsAsync() 
+            : new List<PdfAnnotation>();
+
+        PdfAnnotation? annotation = annotationList.FirstOrDefault(an => an.Id == args.AnnotationId);
+
+        if (annotation != null)
+        {
+            // set polygon annotation color to yellow
+            annotation.FillColor = "#ffff00";
+
+            // set text markup annotation color to yellow
+            annotation.Color = "#ffff00";
+
+            try
+            {
+                await pdfViewer.EditAnnotationAsync(annotation);
+                Console.WriteLine($"Mouse out {args.AnnotationId}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"couldnt edit annotation due to following error {ex.Message}");
+            }
+        }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        // output every key value pair in keyvaluepairslist
+        var _keyValuePairsList = JsonConvert.SerializeObject(keyValuePairsList);
+
+        if (document != null)
+        {
+            document.KeyValuePairs = _keyValuePairsList;
+        }
+
+        await CosmosDbService.UpdateDocumentAsync(document);
+
+        await Task.CompletedTask;
+    }
+
+
+    private async Task AddPolygonAnnotation()
+    {
+        // deserialize keyvaluepairs
+        var keyValuePairs = JsonConvert.DeserializeObject<List<Element>>(document.KeyValuePairs);
+
+        // using linq to flatten the nested collections
+        var boundingRegions = (keyValuePairs ?? new List<Element>())
+             .SelectMany(kvp => (kvp.Key?.BoundingRegions ?? new ()) // If key BoundingRegions is null, use an empty collection
+                 .Union(kvp.Value?.BoundingRegions ?? new ()) // If value BoundingRegions is null, use an empty collection
+                 .Select(br => new AIDataPlatform.Models.DataModel.BoundingRegion // Convert each BoundingRegion to a new BoundingRegion
+                     {
+                         PageNumber = br.PageNumber,
+                         BoundingPolygon = br.BoundingPolygon.Select(bp => new BoundingPolygon
+                         {
+                             X = bp.X * 96, // Convert X from inches to pixels by multiplying by 96 dpi
+                             Y = bp.Y * 96  // Convert Y from inches to pixels by multiplying by 96 dpi
+                         }).ToList()
+                     }))
+             .ToList();
+
+        if (boundingRegions.Any())
+        {
+            // create a list of tasks to add annotations
+            List<Task> _tasks = new ();
+
+            // add annotations for each bounding region
+            foreach (var boundingRegion in boundingRegions)
+            {
+                PdfAnnotation annotation = new ()
+                    {
+                        Type = AnnotationType.Polygon,
+                        PageNumber = boundingRegion.PageNumber - 1, // PageNumber in BoundingRegion is 1-based and needs to be converted to 0-based.
+                        Opacity = 0.2, // set opacity of the annotation
+                        FillColor = "#ffff00", // set fill color of the annotation
+                        IsLock = true, // set annotation to be locked
+                        VertexPoints = boundingRegion.BoundingPolygon.Select(bp => new VertexPoint // set the vertex points of the annotation
+					    {
+						    X = bp.X,
+						    Y = bp.Y
+					    }).ToList()
+                    };
+
+                // add the annotation to the pdf viewer
+                _tasks.Add(pdfViewer.AddAnnotationAsync(annotation));
+            }
+
+            // await all tasks for parallelizing without await calls
+            await Task.WhenAll(_tasks);
+        }
+    }
+
+    // Click for the custom toolbaritems in the primary toolbar
+    public async void ClickAction(ClickEventArgs item)
+    {
+        if (item.Item.Id == "previousDocument")
+        {
+            // load previous document from storage account
+
+        }
+        else if (item.Item.Id == "nextDocument")
+        {
+            // load next document from storage account
+
+        }
+        else if (item.Item.Id == "saveDocument")
+        {
+            var pdfData = await pdfViewer.GetDocumentAsync();
+
+            if (pdfData != null)
+            {
+                using var stream = new MemoryStream(pdfData);
+                await BlobStorageService.UploadBlobAsync(tenantId: tenantId, $"{Path.GetFileNameWithoutExtension(BlobName)}_cmp.pdf", stream);
+            }
+        }
+    }
+
+    // for previous and next document icon load toolbar items
+        /*
+            new PdfToolbarItem() {
+            Index = 1,
+            Template = __builder =>
+                {
+                    <ToolbarItem
+                    PrefixIcon="e-icons e-chevron-left-double"
+                    Text="Previous Document"
+                    TooltipText="Previous Document"
+                    Id="previousDocument"
+                Align=ItemAlign.Left>
+            </ToolbarItem>
+            },
+            CustomToolbarName = "previousDocument"
+        },
+
+            new PdfToolbarItem() {
+            Index = 2,
+            Template = __builder =>
+                {
+                    <ToolbarItem
+                    PrefixIcon="e-icons e-chevron-right-double"
+                    Text="Next Document"
+                    TooltipText="Next Document"
+                    Id="nextDocument"
+                Align=ItemAlign.Left>
+            </ToolbarItem>
+            },
+            CustomToolbarName = "nextDocument"
+    },
+    */
+
+    /*
+    private async Task AddPolygonAnnotationTest()
+    {
+        PdfAnnotation annotation = new();
+
+        // Set the annotation type as polygon
+        annotation.Type = AnnotationType.Polygon;
+
+        // Set the PageNumber starts from 0. So, if set to 2 it represents the page 3.
+        annotation.PageNumber = 0;
+
+        // set opacity of the annotation
+        annotation.Opacity = 0.2;
+
+        annotation.FillColor = "#ffff00";
+
+        List<VertexPoint> vertexPoints = new();
+        VertexPoint vertexPoint = new();
+        vertexPoint.X = 120.2208;
+        vertexPoint.Y = 227.7696;
+        vertexPoints.Add(vertexPoint);
+
+        vertexPoint = new VertexPoint();
+        vertexPoint.X = 145.5264;
+        vertexPoint.Y = 228.2592;
+        vertexPoints.Add(vertexPoint);
+
+        vertexPoint = new VertexPoint();
+        vertexPoint.X = 145.5264;
+        vertexPoint.Y = 240.4224;
+        vertexPoints.Add(vertexPoint);
+
+        vertexPoint = new VertexPoint();
+        vertexPoint.X = 120.2208;
+        vertexPoint.Y = 240.4224;
+        vertexPoints.Add(vertexPoint);
+
+        // Set the Text Markup annotation bounds value
+        annotation.VertexPoints = vertexPoints;
+
+        await pdfViewer.AddAnnotationAsync(annotation);
+    }
+
+    // add text markup annotation
+    private async Task AddTextMarkupAnnotationTest()
+    {
+        PdfAnnotation annotation = new();
+
+        // Set the Text markup annotation type like highlight, underline, strikethrough
+        annotation.Type = AnnotationType.Highlight;
+
+        // Set the PageNumber starts from 0. So, if set to 2 it represents the page 3.
+        annotation.PageNumber = 0;
+
+        List<Bound> bounds = new();
+        Bound bound = new();
+        bound.X = 148;
+        bound.Y = 313;
+        bound.Width = 520;
+        bound.Height = 15;
+        bounds.Add(bound);
+
+        bound = new Bound();
+        bound.X = 148;
+        bound.Y = 332;
+        bound.Width = 102;
+        bound.Height = 15;
+        bounds.Add(bound);
+
+        // Set the Text Markup annotation bounds value
+        annotation.Bounds = bounds;
+
+        await pdfViewer.AddAnnotationAsync(annotation);
+    }
+    */
+
+
+   /*
+     protected override async Task OnInitializedAsync()
+         {
+         var _blobInfos = BlobStorageService.GetSasUri("contoso-out");
+
+         if(_blobInfos.Any())
+             {
+             var _blobInfo = _blobInfos.First();
+
+             var _blobStream = await BlobStorageService.DownloadBlobAsync(_blobInfo.Name);
+
+             string _pdfBase64 = Convert.ToBase64String(_blobStream);
+
+             documentPath = $"data:application/pdf;base64,{_pdfBase64}";
+
+             var _documentQuery = await CosmosDbService.QueryDocumentsAsync<Document>(@$"SELECT * FROM GlobalStore WHERE GlobalStore.DocumentId = '{_blobInfo.Name.Split("_")[0]}'");
+
+             if(_documentQuery.Any())
+                 {
+                 document = _documentQuery.First();
+             }
+             // add additional logic with locking blob in sql database so that another user can't edit the same blob
+         }
+
+
+         //document = await CosmosDbService.GetDocumentByIdAsync<Document>("890026bf-b508-4708-96c4-58ca66b8fd4b", "contoso", "invoice", "20231105");
+         //var content = await CosmosDbService.QueryDocumentsAsync<Document>("SELECT * FROM GlobalStore WHERE GlobalStore.DokumentId = '231101123456789");
+
+         keyValuePairsList = JsonConvert.DeserializeObject<List<Element>>(document.KeyValuePairs) ?? new List<Element>();
+    }
+    */
+}
