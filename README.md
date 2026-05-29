@@ -1,4 +1,4 @@
-# AIDataPlatform (dms)
+# AIDataPlatform
 
 It was once a working project. It was on standby for a while.
 
